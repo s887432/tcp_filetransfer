@@ -11,6 +11,8 @@
 #include <net/if.h>
 #include <arpa/inet.h>
 
+#include "color.h"
+
 #define DEBUG_TIME
 
 #ifdef DEBUG_TIME
@@ -26,6 +28,9 @@
 
 #define CMD_NEXT_KEEPGOING	1
 #define CMD_NEXT_FINISHED	2
+
+#define TCP_DELAY	20
+#define BUFFER_CACHE_SIZE	64*1024
 
 #define SA struct sockaddr
    
@@ -69,22 +74,30 @@ int show_ip(const char *adapter)
 int recvPackage(int connfd, void *buf, int recv_size)
 {
 	int ack = TRANS_ACK_SUCCESS;
-	int transferSize;
+	int byteLeft;
 	int retval;
 	
-	transferSize = recv_size;
-	retval = recv(connfd, buf, transferSize, 0);
-	printf("....%d\r\n", retval);
-	if( retval != transferSize )
+	byteLeft = recv_size;
+	int index = 0;
+	while (index < recv_size)
 	{
-		printf("receive file size error\r\n");
-		ack = TRANS_ACK_FAILURE;
+		retval = recv(connfd, buf+index, byteLeft, 0);
+		
+		if( retval == -1 )
+		{
+			printf("receive packet error\r\n");
+			ack = TRANS_ACK_FAILURE;
+			break;
+		}
+		
+		index += retval;
+		byteLeft -= retval;
 	}
 	
 	// send ack
-	transferSize = sizeof(unsigned int);
-	retval = send(connfd, &ack, transferSize, 0);
-	if( retval != transferSize )
+	byteLeft = sizeof(unsigned int);
+	retval = send(connfd, &ack, byteLeft, 0);
+	if( retval != byteLeft )
 	{
 		printf("send ack error\r\n");
 		ack = TRANS_ACK_FAILURE;
@@ -108,6 +121,8 @@ int jpegProcess(int connfd)
 	int retval;
 	int transferSize;
 
+	printf(RED "Start receving file\r\n" NONE);
+	
 	// 1. receive file size
 	retval = recvPackage(connfd, (void*)&file_size, sizeof(file_size));
 	if( retval < 0 )
@@ -136,7 +151,7 @@ int jpegProcess(int connfd)
 		int len = ((index+section_size) > file_size) ? (file_size-index) : section_size;
 		
 		retval = recvPackage(connfd, (void*)(file_ptr+index), len);
-		printf("Received %d bytes\r\n", retval);
+		//printf("Received %d bytes\r\n", retval);
 		if( retval != len )
 		{
 			printf("Receive data error\r\n");
@@ -147,7 +162,7 @@ int jpegProcess(int connfd)
 		index += section_size;
 	}while(index < file_size);	
 	
-	printf("checksum = %08X\r\n", checksum(file_ptr, file_size));
+	//printf("checksum = %08X\r\n", checksum(file_ptr, file_size));
 	
 	// receive next_comamnd
 	transferSize = sizeof(next_command);
@@ -169,6 +184,10 @@ exit:
 // Driver function
 int main(int argc, char **argv)
 {
+#ifdef DEBUG_TIME
+	struct timeval start, end;
+#endif
+
 	if( argc != 2 )
 	{
 		printf("USAGE: server PORT_NUMBER\r\n");
@@ -197,6 +216,11 @@ int main(int argc, char **argv)
 	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
 	servaddr.sin_port = htons(port);
 
+	int nRecvBuf=BUFFER_CACHE_SIZE;
+	setsockopt(sockfd,SOL_SOCKET,SO_RCVBUF,(const char*)&nRecvBuf,sizeof(int));
+	int nSendBuf=BUFFER_CACHE_SIZE;
+	setsockopt(sockfd,SOL_SOCKET,SO_SNDBUF,(const char*)&nSendBuf,sizeof(int));
+
 	// Binding newly created socket to given IP and verification
 	if ((bind(sockfd, (SA*)&servaddr, sizeof(servaddr))) != 0) {
 		printf("socket bind failed...\n");
@@ -224,7 +248,17 @@ int main(int argc, char **argv)
 		do
 		{
 			// Function for chatting between client and server
+#ifdef DEBUG_TIME
+			gettimeofday(&start, NULL);
+#endif			
 			next_command = jpegProcess(connfd);
+#ifdef DEBUG_TIME
+			gettimeofday(&end, NULL);
+			
+			long long time_es = ((long long)end.tv_sec * 1000000 + end.tv_usec) -
+					((long long)start.tv_sec * 1000000 + start.tv_usec);
+			printf(RED "Transfer time = %lld.%lld\r\n" NONE , time_es/1000, time_es%1000);
+#endif			
 		} while(next_command == CMD_NEXT_KEEPGOING);	
 
 		// After chatting close the socket
