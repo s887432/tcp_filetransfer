@@ -37,24 +37,33 @@ unsigned int checksum(unsigned char *buf, int length)
 
 int sendPackage(int sockfd, void *buf, int send_size)
 {
-	int transferSize;
+	int byteLeft;
 	int ack = TRANS_ACK_SUCCESS;
 	int retval;
 	
-	transferSize = send_size;
-	retval = send(sockfd, buf, transferSize, 0);
-	if( retval != transferSize )
+	byteLeft = send_size;
+	
+	int index = 0;
+	while( index < send_size )
 	{
-		printf("Send package error error\r\n");
-		ack = TRANS_ACK_FAILURE;
+		retval = send(sockfd, buf+index, byteLeft, 0);
+		if( retval == -1 )
+		{
+			printf("Send package error error\r\n");
+			ack = TRANS_ACK_FAILURE;	
+			break;
+		}
+		
+		index += retval;
+		byteLeft -= retval;
 	}
-
+	
 	// waiting for ack
-	transferSize = sizeof(int);
-	retval = recv(sockfd, &ack, transferSize, 0);
-	if( retval != transferSize || ack != TRANS_ACK_SUCCESS)
+	byteLeft = sizeof(int);
+	retval = recv(sockfd, &ack, byteLeft, 0);
+	if( retval != byteLeft || ack != TRANS_ACK_SUCCESS)
 	{
-		printf("%d@%d, %X\r\n", retval, transferSize, ack);
+		printf("%d@%d, %X\r\n", retval, byteLeft, ack);
 		printf("receive ack error\r\n");
 	}
 	
@@ -203,6 +212,11 @@ int main(int argc, char **argv)
         printf("Socket successfully created..\n");
     bzero(&servaddr, sizeof(servaddr));
    
+   	int nRecvBuf=32*1024;
+	setsockopt(sockfd,SOL_SOCKET,SO_RCVBUF,(const char*)&nRecvBuf,sizeof(int));
+	int nSendBuf=32*1024;
+	setsockopt(sockfd,SOL_SOCKET,SO_SNDBUF,(const char*)&nSendBuf,sizeof(int));
+	
     // assign IP, PORT
     servaddr.sin_family = AF_INET;
     servaddr.sin_addr.s_addr = inet_addr(argv[1]);
