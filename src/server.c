@@ -66,6 +66,33 @@ int show_ip(const char *adapter)
 	close(fd);
 }
 
+int recvPackage(int connfd, void *buf, int recv_size)
+{
+	int ack = TRANS_ACK_SUCCESS;
+	int transferSize;
+	int retval;
+	
+	transferSize = recv_size;
+	retval = recv(connfd, buf, transferSize, 0);
+	printf("....%d\r\n", retval);
+	if( retval != transferSize )
+	{
+		printf("receive file size error\r\n");
+		ack = TRANS_ACK_FAILURE;
+	}
+	
+	// send ack
+	transferSize = sizeof(unsigned int);
+	retval = send(connfd, &ack, transferSize, 0);
+	if( retval != transferSize )
+	{
+		printf("send ack error\r\n");
+		ack = TRANS_ACK_FAILURE;
+	}
+	
+	return (ack == TRANS_ACK_SUCCESS) ? recv_size : -1;
+}
+
 // Function designed for chat between client and server.
 int jpegProcess(int connfd)
 {
@@ -80,100 +107,58 @@ int jpegProcess(int connfd)
 	int ret = 0;
 	int retval;
 	int transferSize;
-	
-	// 1. waiting for file size
-	transferSize = sizeof(file_size);
-	retval = recv(connfd, &file_size, sizeof(file_size), 0);
-	if( retval != transferSize )
+
+	// 1. receive file size
+	retval = recvPackage(connfd, (void*)&file_size, sizeof(file_size));
+	if( retval < 0 )
 	{
 		printf("receive file size error\r\n");
 		ret = -1;
 		goto exit;
 	}
-	
-	// send ack
-	transferSize = sizeof(unsigned int);
-	retval = send(connfd, &ack, transferSize, 0);
-	if( retval != transferSize )
-	{
-		printf("send ack error\r\n");
-		ret = -1;
-		goto exit;
-	}
 	printf("File size is %d\r\n", file_size);
-	
-	// 2. waiting for section size
-	transferSize = sizeof(file_size);
-	retval = recv(connfd, &section_size, transferSize, 0);
-	if( retval != transferSize )
+
+	// 2. receive section size
+	retval = recvPackage(connfd, (void*)&section_size, sizeof(section_size));
+	if( retval < 0 )
 	{
 		printf("receive section size error\r\n");
 		ret = -1;
 		goto exit;
 	}
-	
-	// send ack
-	transferSize = sizeof(unsigned int);
-	retval = send(connfd, &ack, transferSize, 0);
-	if( retval != transferSize )
-	{
-		printf("send ack error\r\n");
-		ret = -1;
-		goto exit;
-	}
 	printf("section size is %d\r\n", section_size);
 	
-	// receive data loop
+	// 3. receive data loop
 	file_ptr = (unsigned char*)malloc(file_size);
 	int index = 0;
 	do
 	{
-		//printf("Receving index = %d\r\n", index);
-		retval = recv(connfd, file_ptr+index, section_size, 0);
-		if( retval != section_size )
+		int len = ((index+section_size) > file_size) ? (file_size-index) : section_size;
+		
+		retval = recvPackage(connfd, (void*)(file_ptr+index), len);
+		printf("Received %d bytes\r\n", retval);
+		if( retval != len )
 		{
 			printf("Receive data error\r\n");
 			ret = -1;
-			ack = TRANS_ACK_FAILURE;
-		}
-		
-		// send ack
-		transferSize = sizeof(unsigned int);
-		retval = send(connfd, &ack, transferSize, 0);
-		if( retval != transferSize || ret < 0)
-		{
-			printf("send ack error\r\n");
-			ret = -1;
 			goto exit;
 		}
-		
+
 		index += section_size;
 	}while(index < file_size);	
 	
 	printf("checksum = %08X\r\n", checksum(file_ptr, file_size));
 	
 	// receive next_comamnd
-	transferSize = sizeof(int);
-	retval = recv(connfd, &next_command, transferSize, 0);
+	transferSize = sizeof(next_command);
+	retval = recvPackage(connfd, (void*)&next_command, transferSize);
 	if( retval != transferSize )
 	{
 		printf("receive next command error\r\n");
 		ret = -1;
 		goto exit;
 	}
-	
-	printf("Next comamnd=%d\r\n", next_command);
-	
-	// send ack
-	transferSize = sizeof(unsigned int);
-	retval = send(connfd, &ack, transferSize, 0);
-	if( retval != transferSize )
-	{
-		printf("send ack error\r\n");
-		ret = -1;
-		goto exit;
-	}
-	
+	printf("Next comamnd=%d\r\n", next_command);	
 	ret = next_command;
 	
 exit:
@@ -248,4 +233,3 @@ int main(int argc, char **argv)
 	
 	close(sockfd);
 }
-
