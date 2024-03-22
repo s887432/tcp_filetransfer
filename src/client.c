@@ -21,7 +21,7 @@
 #define SA struct sockaddr
 
 #define JPEG_START_NUM	3000
-#define JPEG_END_NUM	JPEG_START_NUM+10
+#define JPEG_END_NUM	JPEG_START_NUM+1
 
 unsigned int checksum(unsigned char *buf, int length)
 {
@@ -33,6 +33,32 @@ unsigned int checksum(unsigned char *buf, int length)
 	}
 	
 	return sum;
+}
+
+int sendPackage(int sockfd, void *buf, int send_size)
+{
+	int transferSize;
+	int ack = TRANS_ACK_SUCCESS;
+	int retval;
+	
+	transferSize = send_size;
+	retval = send(sockfd, buf, transferSize, 0);
+	if( retval != transferSize )
+	{
+		printf("Send package error error\r\n");
+		ack = TRANS_ACK_FAILURE;
+	}
+
+	// waiting for ack
+	transferSize = sizeof(int);
+	retval = recv(sockfd, &ack, transferSize, 0);
+	if( retval != transferSize || ack != TRANS_ACK_SUCCESS)
+	{
+		printf("%d@%d, %X\r\n", retval, transferSize, ack);
+		printf("receive ack error\r\n");
+	}
+	
+	return (ack == TRANS_ACK_SUCCESS) ? send_size : -1;	
 }
 
 int sendFile(int sockfd, int section_size, const char *filename)
@@ -51,49 +77,27 @@ int sendFile(int sockfd, int section_size, const char *filename)
 	file_size = ftell(fp);
 	fseek(fp, 0L, SEEK_SET);
 
-	printf("Read %d bytes\r\n", file_size);
-	
 	// read file data
 	file_ptr = (unsigned char*)malloc(file_size);
 	fread(file_ptr, file_size, 1, fp);
 	fclose(fp);
 	
 	// 1. send file size
-	transferSize = sizeof(int);
-	retval = send(sockfd, &file_size, transferSize, 0);
-	if( retval != transferSize )
+	printf("File size %d bytes\r\n", file_size);
+	retval = sendPackage(sockfd, (void*)&file_size, sizeof(file_size));
+	if( retval != sizeof(file_size) )
 	{
 		printf("Send file size error\r\n");
 		ret = -1;
 		goto exit;
 	}
-	// waiting for ack
-	transferSize = sizeof(int);
-	retval = recv(sockfd, &ack, transferSize, 0);
-	if( retval != transferSize || ack != TRANS_ACK_SUCCESS)
-	{
-		printf("%d@%d, %X\r\n", retval, transferSize, ack);
-		printf("receive ack error\r\n");
-		ret = -1;
-		goto exit;
-	}
 	
 	// 2. send section size	
-	transferSize = sizeof(int);
-	retval = send(sockfd, &section_size, transferSize, 0);
-	if( retval != transferSize )
+	printf("Section size %d bytes\r\n", section_size);
+	retval = sendPackage(sockfd, (void*)&section_size, sizeof(section_size));
+	if( retval != sizeof(section_size) )
 	{
 		printf("Send section size error\r\n");
-		ret = -1;
-		goto exit;
-	}
-	// waiting for ack
-	transferSize = sizeof(ack);
-	retval = recv(sockfd, &ack, transferSize, 0);
-	if( retval != transferSize || ack != TRANS_ACK_SUCCESS)
-	{
-		printf("%d@%d, %X\r\n", retval, transferSize, ack);
-		printf("receive ack error\r\n");
 		ret = -1;
 		goto exit;
 	}
@@ -102,23 +106,12 @@ int sendFile(int sockfd, int section_size, const char *filename)
 	printf("checksum = %08X\r\n", checksum(file_ptr, file_size));
 	do
 	{
-		//printf("Sending index = %d\r\n", index);
-		transferSize = section_size;
-		retval = send(sockfd, file_ptr+index, section_size, 0);
-		if( retval != section_size )
+		int len = ((index+section_size) > file_size) ? (file_size-index) : section_size;
+		retval = sendPackage(sockfd, (void*)(file_ptr+index), len);
+		printf("Sent %d bytes\r\n", retval);
+		if( retval != len )
 		{
-			printf("Send data error (%d)\r\n", retval);
-			ret = 1;
-			break;
-		}
-		
-		// receive ack
-		transferSize = sizeof(int);
-		retval = recv(sockfd, &ack, transferSize, 0);
-		if( retval != transferSize || ack != TRANS_ACK_SUCCESS)
-		{
-			printf("%d@%d, %X\r\n", retval, transferSize, ack);
-			printf("receive ack error\r\n");
+			printf("Receive data error\r\n");
 			ret = -1;
 			goto exit;
 		}
@@ -139,28 +132,15 @@ int sendNextCommand(int sockfd, int next_command)
 	int ret = 0;
 	int ack = 0;
 	
+	printf("Next command=%X\r\n", next_command);
 	// 1. send next command
-	transferSize = sizeof(int);
-	retval = send(sockfd, &next_command, transferSize, 0);
-	if( retval != transferSize )
+	retval = sendPackage(sockfd, (void*)(&next_command), sizeof(next_command));
+	if( retval != sizeof(next_command) )
 	{
-		printf("Send command error\r\n");
-		ret = -1;
+		printf("Send ack error\r\n");
+		return -1;
 	}
-	
-	if( ret >= 0 )
-	{
-		// waiting for ack
-		transferSize = sizeof(int);
-		retval = recv(sockfd, &ack, transferSize, 0);
-		if( retval != transferSize || ack != TRANS_ACK_SUCCESS)
-		{
-			printf("%d@%d, %X\r\n", retval, transferSize, ack);
-			printf("receive ack error\r\n");
-			ret = -1;
-		}
-	}
-	
+
 	return ret;
 }
 
@@ -242,4 +222,3 @@ int main(int argc, char **argv)
     // close the socket
     close(sockfd);
 }
-
