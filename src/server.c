@@ -131,8 +131,16 @@ int jpegProcess(int connfd)
 		ret = -1;
 		goto exit;
 	}
+	
 	printf("File size is %d\r\n", file_size);
 
+	if( file_size < 0 )
+	{
+		printf("Client finished transfer\r\n");
+		// client finished transfer
+		return CMD_NEXT_FINISHED;
+	}
+	
 	// 2. receive section size
 	retval = recvPackage(connfd, (void*)&section_size, sizeof(section_size));
 	if( retval < 0 )
