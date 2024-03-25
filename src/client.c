@@ -153,7 +153,7 @@ int sendNextCommand(int sockfd, int next_command)
 	return ret;
 }
 
-void func(int sockfd, int section_size)
+void func(int sockfd, int section_size, const char *listname)
 {
 	unsigned char *file_ptr;
 	int file_size;
@@ -163,6 +163,50 @@ void func(int sockfd, int section_size)
 	char filename[80];
 	int ret;
 
+#if 1
+	FILE *fp;
+	
+	if( (fp = fopen(listname, "r")) == NULL )
+	{
+		printf("Read list file error\r\n");
+		return;
+	}
+	
+	while( fgets(filename, 80, fp) )
+	{
+		int len = strlen(filename);
+		for(int i=len-1; i>0; i--)
+		{
+			if( filename[i] <= 0x20 )
+				filename[i] = 0;
+		}
+		
+		printf("Reading [%s]\r\n", filename);
+		
+		if( strcmp(filename, "EOF") == 0 )
+		{
+			file_size = -1;
+			sendPackage(sockfd, (void*)&file_size, sizeof(file_size));
+			
+			// end of file
+			next_command = CMD_NEXT_FINISHED;
+		}
+		else
+		{
+			ret = sendFile(sockfd, section_size, filename);
+			if( ret < 0 )
+			{
+				break;
+			}
+			
+			next_command = CMD_NEXT_KEEPGOING;
+			// send next com
+			sendNextCommand(sockfd, next_command);
+		}	
+	}
+	
+	fclose(fp);
+#else
 	//for (int i=3000; i<=3641; i++)
 	for (int i=JPEG_START_NUM; i<=JPEG_END_NUM; i++)
 	{
@@ -186,13 +230,14 @@ void func(int sockfd, int section_size)
 		// send next com
 		sendNextCommand(sockfd, next_command);
 	}
+#endif
 }
    
 int main(int argc, char **argv)
 {
-	if( argc != 4 )
+	if( argc != 5 )
 	{
-		printf("USAGE: client SERVER_IP PORT SECTION_SIZE(KB)\r\n");
+		printf("USAGE: client SERVER_IP PORT SECTION_SIZE(KB) LIST_NAME\r\n");
 		return EXIT_FAILURE;
 	}
 	
@@ -231,7 +276,7 @@ int main(int argc, char **argv)
         printf("connected to the server..\n");
    
     // function for chat
-    func(sockfd, section_size*1024);
+    func(sockfd, section_size*1024, argv[4]);
    
     // close the socket
     close(sockfd);
